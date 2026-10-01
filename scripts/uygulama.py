@@ -503,8 +503,9 @@ class Sekme(QWidget):
 
 
 class Cekmece(QFrame):
-    """Test çekmecesi: üstte projeler ve sürümleri (qml/TestListesi.qml), bir sürüm açılınca altında önizleme.
-    Yeri pencereye bağlıdır: pencere boyutlanınca kenarlarıyla birlikte değişir (Pencere.resizeEvent)."""
+    """Test çekmecesi: üstte projeler ve sürümleri (qml/TestListesi.qml), bir sürüm açılınca genişleyip pencerenin
+    bütün iç alanını kaplar, önizleme listenin altında açılır. Yeri ve boyu pencereye bağlıdır: pencere
+    boyutlanınca kenarlarıyla birlikte değişir (Pencere.resizeEvent)."""
 
     def __init__(self, parent: QWidget, arayuz: QObject) -> None:
         super().__init__(parent)
@@ -835,7 +836,7 @@ class Pencere(QMainWindow):
         g = self.centralWidget()
         W, H = g.width(), g.height()
         ic = W - SOL - KENAR
-        w = min(440, ic) if kip in ("liste", "kapali") else ic if self.yan_yana else max(min(440, ic), int(ic * 0.62))
+        w = min(440, ic) if kip in ("liste", "kapali") else ic  # önizleme: pencerenin bütün iç alanı
         x = SOL if kip != "kapali" else -w - 4
         return QRect(x, KENAR, w, H - 2 * KENAR)
 
