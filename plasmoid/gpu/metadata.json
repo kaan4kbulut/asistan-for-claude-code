@@ -1,0 +1,14 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "local.claude.gpu",
+        "Name": "Ekran kartı sıcaklığı",
+        "Description": "NVIDIA kartın sıcaklığı; kart uyurken onu uyandırmadan 'uykuda' yazar",
+        "Icon": "gpu",
+        "Category": "System Information",
+        "Version": "1.0",
+        "License": "MIT",
+        "Authors": [{"Name": "Asistan for Claude Code"}]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

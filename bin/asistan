@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Asistan for Claude Code başlatıcısı.
+
+  asistan                  programı açar (açıksa öne getirir)
+  asistan --arka-planda    sistem tepsisinde başlatır (oturum açılışında)
+  asistan dikte            konuşarak yazmayı başlatır / bitirir (widget'ın mikrofonu)
+  asistan arka KOMUT...    arka plan oturumları (claude-arka ile aynı)
+  asistan widget-kur       masaüstü widget'ını (KDE Plasma 6) kurar ya da günceller
+  asistan gpu              ayrı ekran kartının durumu (json; kart uyurken onu uyandırmaz)
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+args = sys.argv[1:]
+if args[:1] == ["dikte"]:
+    import sesli_istem
+
+    sys.exit(sesli_istem.main(["sesli_istem", "ac-kapa"]))
+if args[:1] == ["arka"]:
+    import arka
+
+    sys.exit(arka.main(["claude-arka", *args[1:]]))
+if args[:1] == ["gpu"]:
+    import json
+
+    import veri
+
+    print(json.dumps(veri.gpu_details()))
+    sys.exit(0)
+if args[:1] in (["-h"], ["--help"], ["yardim"]):
+    print(__doc__)
+    sys.exit(0)
+import uygulama  # noqa: E402
+
+if args[:1] == ["widget-kur"]:
+    sys.exit(uygulama.widget_kur())
+sys.exit(uygulama.main(args))

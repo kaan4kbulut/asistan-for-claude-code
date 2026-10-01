@@ -1,0 +1,18 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "local.claude.widget",
+        "Name": "Asistan for Claude Code",
+        "Description": "Asistan for Claude Code programının masaüstü önizlemesi: Claude'un ne yaptığı, son konuşma, işlemler ve tahmini süreler, adımlar, eksikler, test sürümleri ve sistem; konuşarak yazma (Dikte)",
+        "Icon": "utilities-terminal",
+        "Category": "System Information",
+        "Version": "2.0",
+        "License": "MIT",
+        "Authors": [
+            {
+                "Name": "Asistan for Claude Code"
+            }
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

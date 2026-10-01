@@ -1,0 +1,47 @@
+/* kaynak: Asistan teması. PySide/PyQt pencereleri için (kurallar: TEMA.md). app.setStyleSheet(bu dosya);
+   yazı tipini ayrıca sabit genişlikli yap: app.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)). */
+QWidget { background: #1C1B19; color: #E8E5DF; selection-background-color: #D77757; selection-color: #1C1B19; }
+QMainWindow, QDialog { background: #1C1B19; }
+QToolTip { background: #23221F; color: #E8E5DF; border: 1px solid #D77757; padding: 3px 6px; }
+
+/* bölüm başlığı: QLabel#bolum ya da QGroupBox başlığı turuncu kalın */
+QLabel#bolum, QGroupBox::title { color: #D77757; font-weight: bold; }
+QGroupBox { border: 0; border-top: 1px solid rgba(255, 255, 255, 30); margin-top: 14px; padding-top: 8px; }
+QGroupBox::title { subcontrol-origin: margin; left: 0; padding: 0 6px 0 0; }
+QLabel[sonuk="true"] { color: #8F8C86; }
+
+/* tuş */
+QPushButton, QToolButton { background: rgba(255, 255, 255, 13); color: #E8E5DF; border: 1px solid rgba(255, 255, 255, 33);
+  border-radius: 4px; padding: 3px 10px; }
+QPushButton:hover, QToolButton:hover { background: rgba(255, 255, 255, 31); }
+QPushButton:checked, QToolButton:checked, QPushButton[ana="true"] { color: #D77757; border-color: #D77757; }
+QPushButton:checked, QToolButton:checked { background: rgba(215, 119, 87, 41); }
+QPushButton[tehlike="true"] { color: #E5484D; border-color: rgba(229, 72, 77, 128); }
+QPushButton:disabled, QToolButton:disabled { color: rgba(232, 229, 223, 115); border-color: rgba(255, 255, 255, 20); }
+
+/* giriş kutuları ve listeler */
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QComboBox { background: #141311; color: #E8E5DF;
+  border: 1px solid rgba(255, 255, 255, 56); border-radius: 6px; padding: 4px 8px; }
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus { border-color: #D77757; }
+QComboBox::drop-down { border: 0; width: 18px; }
+QComboBox QAbstractItemView { background: #1C1B19; border: 1px solid #D77757; selection-background-color: rgba(255, 255, 255, 26);
+  selection-color: #D77757; }
+QListView, QTreeView, QTableView { background: #141311; border: 1px solid rgba(255, 255, 255, 26); border-radius: 6px; }
+QListView::item:selected, QTreeView::item:selected, QTableView::item:selected { background: rgba(215, 119, 87, 41); color: #D77757; }
+QHeaderView::section { background: #23221F; color: #8F8C86; border: 0; border-bottom: 1px solid rgba(255, 255, 255, 26); padding: 3px 6px; }
+
+/* sekmeler */
+QTabWidget::pane { border: 1px solid rgba(255, 255, 255, 26); border-radius: 6px; }
+QTabBar::tab { background: transparent; color: #8F8C86; padding: 4px 10px; border: 1px solid transparent; border-radius: 4px; }
+QTabBar::tab:selected { color: #D77757; border-color: #D77757; background: rgba(215, 119, 87, 41); }
+
+/* ilerleme çubuğu */
+QProgressBar { background: rgba(255, 255, 255, 20); border: 0; border-radius: 2px; max-height: 4px; text-align: center; color: transparent; }
+QProgressBar::chunk { background: #D77757; border-radius: 2px; }
+
+/* kaydırma çubuğu: ince */
+QScrollBar:vertical { background: transparent; width: 8px; }
+QScrollBar::handle:vertical { background: rgba(255, 255, 255, 46); border-radius: 4px; min-height: 24px; }
+QScrollBar:horizontal { background: transparent; height: 8px; }
+QScrollBar::handle:horizontal { background: rgba(255, 255, 255, 46); border-radius: 4px; min-width: 24px; }
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { background: transparent; border: 0; }

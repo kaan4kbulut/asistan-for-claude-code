@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Asistan terminali</title>
+<!-- Asistan programının terminali: her arka plan oturumu (tmux) için bir xterm.js; hepsi tek sayfada, yalnızca seçili
+     olan görünür. Veri Qt köprüsüyle (QWebChannel, nesne "kopru") gelir ve gider: uygulama.py'deki Kopru. -->
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  :root { --bg: #141311; --fg: #E8E5DF; --dim: #8F8C86; --clay: #D77757; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  #terms { position: absolute; inset: 6px 4px 4px 8px; }
+  .term { position: absolute; inset: 0; visibility: hidden; }
+  .term.on { visibility: visible; }
+  .xterm .xterm-viewport { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
+</style>
+</head>
+<body>
+<div id="terms"></div>
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="vendor/addon-webgl.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+"use strict";
+const THEME = {
+  background: "#141311", foreground: "#E8E5DF", cursor: "#D77757", cursorAccent: "#141311",
+  selectionBackground: "rgba(215,119,87,.35)",
+  black: "#1C1B19", red: "#E5484D", green: "#4EBA65", yellow: "#E0B34F", blue: "#5B8DEF", magenta: "#C678DD",
+  cyan: "#56B6C2", white: "#D9D6D0", brightBlack: "#6E6B66", brightRed: "#FF6B6F", brightGreen: "#6FD48A",
+  brightYellow: "#F5CC6B", brightBlue: "#7EA8FF", brightMagenta: "#D98FEF", brightCyan: "#76D0DB", brightWhite: "#FFFFFF",
+};
+const terms = {};   // ad -> {term, fit, el}
+let kopru = null, secili = "", yazi = 13, aile = "monospace";
+const dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+function olustur(ad) {
+  if (terms[ad]) return terms[ad];
+  const el = document.createElement("div");
+  el.className = "term";
+  document.getElementById("terms").appendChild(el);
+  const term = new Terminal({
+    theme: THEME, fontFamily: aile, fontSize: yazi, lineHeight: 1.1, cursorBlink: false,
+    scrollback: 5000, allowProposedApi: true, macOptionIsMeta: true, rightClickSelectsWord: true,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.loadAddon(new Unicode11Addon.Unicode11Addon());
+  term.unicode.activeVersion = "11";
+  term.open(el);
+  try { term.loadAddon(new WebglAddon.WebglAddon()); } catch (e) { /* WebGL yoksa yazılım çizimi */ }
+  term.onData(d => kopru && kopru.girdi(ad, d));
+  term.onBinary(d => kopru && kopru.ikili(ad, d));
+  term.onResize(s => kopru && kopru.boyut(ad, s.cols, s.rows));
+  // Claude Code panoya OSC 52 ile kopyalar (tmux set-clipboard on ile buraya gelir)
+  term.parser.registerOscHandler(52, data => {
+    const b64 = data.slice(data.indexOf(";") + 1);
+    if (b64 && b64 !== "?") { try { kopru.kopyala(new TextDecoder().decode(dec(b64))); } catch (e) {} }
+    return true;
+  });
+  term.attachCustomKeyEventHandler(e => {
+    if (e.type !== "keydown") return true;
+    const k = e.key.toLowerCase();
+    if (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === "Enter") {  // Claude Code'da yeni satır
+      kopru.girdi(ad, "\x1b\r"); return false;
+    }
+    if (e.ctrlKey && e.shiftKey && k === "c") {  // seçili yazıyı kopyala
+      if (term.hasSelection()) kopru.kopyala(term.getSelection());
+      return false;
+    }
+    if (e.ctrlKey && !e.altKey && k === "v") {  // panoda yazı varsa yapıştır, yoksa (ör. resim) Ctrl+V Claude'a
+      e.preventDefault();
+      kopru.pano(ad, t => { if (t) term.paste(t); else kopru.girdi(ad, "\x16"); });
+      return false;
+    }
+    return true;
+  });
+  terms[ad] = { term, fit, el };
+  return terms[ad];
+}
+
+function sigdir() {
+  for (const ad in terms) { try { terms[ad].fit.fit(); } catch (e) {} }
+}
+
+window.Asistan = {
+  ayar(font, size) { aile = font; yazi = size; },
+  // Açık oturumlar: listede olmayanlar kapanır
+  eszamanla(adlar) {
+    for (const ad in terms) if (!adlar.includes(ad)) { terms[ad].term.dispose(); terms[ad].el.remove(); delete terms[ad]; }
+  },
+  goster(ad) {
+    const t = olustur(ad);
+    secili = ad;
+    for (const x in terms) terms[x].el.classList.toggle("on", x === ad);
+    try { t.fit.fit(); } catch (e) {}
+    kopru.boyut(ad, t.term.cols, t.term.rows);
+    t.term.focus();
+  },
+  odak() { if (terms[secili]) terms[secili].term.focus(); },
+  boyutu(ad) { const t = olustur(ad); try { t.fit.fit(); } catch (e) {} return [t.term.cols, t.term.rows]; },
+};
+
+new ResizeObserver(sigdir).observe(document.getElementById("terms"));
+new QWebChannel(qt.webChannelTransport, ch => {
+  kopru = ch.objects.kopru;
+  kopru.cikti.connect((ad, b64) => { const t = terms[ad] || olustur(ad); t.term.write(dec(b64)); });
+  kopru.hazir();
+});
+</script>
+</body>
+</html>
