@@ -86,6 +86,18 @@ def _live_claude(pid: int) -> bool:
         return False
 
 
+def _claude_pid(pane_pid: str) -> str:
+    """Sekmedeki Claude süreci. tmux tek parçalı komutu (yeni sohbet: yalnızca `claude`) kabukla çalıştırır
+    (`fish -c claude`): o zaman sekmenin süreci kabuktur, Claude onun çocuğudur; durum dosyası Claude'un numarasıyla."""
+    if not pane_pid.isdigit() or _live_claude(int(pane_pid)):
+        return pane_pid
+    try:
+        kids = Path(f"/proc/{pane_pid}/task/{pane_pid}/children").read_text().split()
+    except OSError:
+        kids = []
+    return next((k for k in kids if _live_claude(int(k))), pane_pid)
+
+
 def _info(pid: str) -> dict[str, Any]:
     try:
         return dict(json.loads((SESSIONS / f"{pid}.json").read_text()))
@@ -106,6 +118,7 @@ def sessions() -> list[dict[str, Any]]:
         if dead == "1":
             tmux("kill-session", "-t", name)
             continue
+        pid = _claude_pid(pid)
         info = _info(pid)  # Claude ilk soruyu (klasöre güven) geçene kadar durum dosyası yazmaz
         cwd = str(info.get("cwd") or path)
         resumed = _RESUME.search(start)

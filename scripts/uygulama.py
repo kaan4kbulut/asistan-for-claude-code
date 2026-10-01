@@ -249,7 +249,17 @@ class Arkada(QObject):
         self.bitti.connect(lambda cb, r: cb(r))
 
     def calistir(self, fn: Callable[[], Any], cb: Callable[[Any], None]) -> None:
-        threading.Thread(target=lambda: self.bitti.emit(cb, fn()), daemon=True).start()
+        def run() -> None:
+            try:
+                r = fn()
+            except Exception:  # noqa: BLE001 - arka plan işindeki hata kaybolmasın: kayda yaz, None dön
+                import traceback
+
+                traceback.print_exc()
+                r = None
+            self.bitti.emit(cb, r)
+
+        threading.Thread(target=run, daemon=True).start()
 
 
 _dikte: tuple[float, bool] = (0.0, False)
@@ -810,8 +820,10 @@ class Pencere(QMainWindow):
         return {"sol": r.x() + 6, "ust": ust, "alt": self.centralWidget().height() - r.bottom() + 10,
                 "oran": (r.right() - 4) / max(1, self.centralWidget().width())}  # fmt: skip
 
-    def _uygulama_acildi(self, sonuc: tuple[int, list[dict[str, object]]]) -> None:
-        kod, hedefler = sonuc
+    def _uygulama_acildi(self, sonuc: tuple[int, list[dict[str, object]]] | None) -> None:
+        kod, hedefler = sonuc or (1, [])
+        if kod != 0:
+            print(f"test programı açılamadı: {self.acik_kimlik} kod {kod}", file=sys.stderr)
         self.uygulamalar = hedefler or self.uygulamalar
         self.arayuz.bildirim.emit("test", "" if kod == 0 else "Bu sürüm kurulu değil." if kod == 3 else f"Açılamadı ({kod})")
         self.cekmece.ayarla(acik=self.acik_kimlik if kod == 0 else "")

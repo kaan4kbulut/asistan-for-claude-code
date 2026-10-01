@@ -97,14 +97,24 @@ def _port_open(port: int) -> bool:
         return False
 
 
+# Komut satırında yalnızca geçtiği için "çalışıyor" sayılmasın: kabuk komutları, arama araçları, düzenleyiciler
+_ARACLAR = {"grep", "pgrep", "rg", "ugrep", "ps", "pkill", "kill", "less", "cat", "sed", "awk", "tail", "head"}
+
+
 def _cmdlines() -> list[str]:
+    """Çalışan programların kendisi: argv[0] ve (yorumlayıcılar için) argv[1]; kabukların -c komutu ve arama
+    araçları sayılmaz (iz onların komut satırında geçse bile o program çalışmıyordur)."""
     out = []
     for p in Path("/proc").iterdir():
-        if p.name.isdigit():
-            try:
-                out.append((p / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace"))
-            except OSError:
-                continue
+        if not p.name.isdigit():
+            continue
+        try:
+            argv = [a.decode(errors="replace") for a in (p / "cmdline").read_bytes().split(b"\0") if a]
+        except OSError:
+            continue
+        if not argv or Path(argv[0]).name in _ARACLAR:
+            continue
+        out.append(" ".join(a for a in argv[:2] if a != "-c"))
     return out
 
 
@@ -226,14 +236,17 @@ def open_apps_inside(pid: str, which: str, alan: dict[str, float]) -> tuple[int,
 
     found = _versions(pid, which)
     if found is None:
+        print(f"testler: {pid} {which} bulunamadı", file=sys.stderr)
         return 2, []
     apps = [(k, v) for k, v in found[1] if v["tur"] == "uygulama"]
     if not apps:
+        print(f"testler: {pid} {which} masaüstü programı değil", file=sys.stderr)
         return 3, []
     procs = _cmdlines()
     hedefler: list[dict[str, object]] = []
     for i, (_, v) in enumerate(apps):
         if not v.get("program") or not Path(v["program"]).exists():
+            print(f"testler: {pid} {which} programı yok: {v.get('program')}", file=sys.stderr)
             return 3, []
         if not any(v["iz"] in c for c in procs):
             _spawn([str(v["program"])], cwd=v.get("cwd"))

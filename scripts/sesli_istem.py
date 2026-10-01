@@ -38,15 +38,16 @@ def _find_dikte() -> Path | None:
     """Dikte'nin klasörü: DIKTE_DIR ya da Dikte'nin install.sh'inin yazdığı dikte.desktop'taki başlatma yolu."""
     if os.environ.get("DIKTE_DIR"):
         return Path(os.environ["DIKTE_DIR"]).expanduser()
-    data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
-    try:
-        for line in (data / "applications/dikte.desktop").read_text().splitlines():
-            if line.startswith("Exec="):
-                for part in line[5:].split():
-                    if part.endswith("dikte/__main__.py"):
-                        return Path(part).parent.parent
-    except OSError:
-        pass
+    # Dikte'nin install.sh'i kaydı her zaman ~/.local/share'e yazar; XDG_DATA_HOME başka bir yerse ona da bakılır
+    for data in (Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share"), Path.home() / ".local/share"):
+        try:
+            for line in (data / "applications/dikte.desktop").read_text().splitlines():
+                if line.startswith("Exec="):
+                    for part in line[5:].split():
+                        if part.endswith("dikte/__main__.py"):
+                            return Path(part).parent.parent
+        except OSError:
+            continue
     return None
 
 

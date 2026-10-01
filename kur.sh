@@ -1,58 +1,87 @@
 #!/usr/bin/env bash
 # Asistan for Claude Code'u kurar ya da günceller (bu klasörden çalışır, dosyaları kopyalamaz):
-#   - eksik gerekenleri paket yöneticisiyle kurar: tmux, PySide6 (QtWebEngine ile)
+#   - eksik gerekenleri dağıtımın paket yöneticisiyle kurar: tmux, PySide6 (QtWebEngine ile)
+#   - Claude Code kurulu değilse resmî kurulum betiğiyle kurar
 #   - başlatıcı: ~/.local/bin/asistan (ve eski adıyla claude-arka)
 #   - uygulama menüsü kaydı ve oturum açılışında sistem tepsisinde başlatma
 #   - masaüstü widget'ı (yalnızca KDE Plasma 6'da)
-# Claude Code (claude) kurulu değilse resmî kurulum betiğiyle kurar. Konuşarak yazma için Dikte isteğe bağlıdır.
-# Seçenekler: --widget-yok (widget'ı kurma), --otomatik-baslatma-yok
+#   - konuşarak yazma için Dikte'yi (github.com/yusufipk/dikte) gerekenleriyle indirip kurar; kuruluysa dokunmaz
+# Kullanıcıdan elle bir şey kurması istenmez; yönetici parolası yalnızca sistem paketleri için sorulur.
+# Seçenekler: --widget-yok, --otomatik-baslatma-yok, --dikte-yok
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 DIR="$PWD"
 WIDGET=1
 AUTOSTART=1
+DIKTE=1
 for a in "$@"; do
     case "$a" in
         --widget-yok) WIDGET=0 ;;
         --otomatik-baslatma-yok) AUTOSTART=0 ;;
+        --dikte-yok) DIKTE=0 ;;
     esac
 done
+DIKTE_REPO="https://github.com/yusufipk/dikte"
+DIKTE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dikte"
 
 ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 say() { printf '  %s\n' "$1"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
+
+# Paket yöneticisi ve mantıksal adların dağıtımdaki karşılıkları
+PM=""
+for p in pacman apt-get dnf zypper; do
+    if command -v "$p" >/dev/null; then PM="$p"; break; fi
+done
+paket_adlari() {  # mantıksal ad → paket adları
+    case "$PM:$1" in
+        *:tmux) echo tmux ;;
+        *:git) echo git ;;
+        *:ffmpeg) case "$PM" in dnf) echo ffmpeg-free ;; *) echo ffmpeg ;; esac ;;
+        pacman:pyside) echo pyside6 qt6-webengine ;;
+        apt-get:pyside) echo python3-pyside6.qtwebenginewidgets python3-pyside6.qtquickwidgets python3-pyside6.qtwebchannel ;;
+        dnf:pyside | zypper:pyside) echo python3-pyside6 ;;
+        pacman:pyqt) echo python-pyqt6 ;;
+        apt-get:pyqt | dnf:pyqt) echo python3-pyqt6 ;;
+        zypper:pyqt) echo python3-PyQt6 ;;
+        pacman:ses) echo pipewire-audio ;;
+        apt-get:ses) echo pipewire-bin ;;
+        dnf:ses) echo pipewire-utils ;;
+        zypper:ses) echo pipewire-tools ;;
+        *:pano) [[ "${XDG_SESSION_TYPE:-}" == "x11" ]] && echo xclip xdotool || echo wl-clipboard ydotool ;;
+    esac
+}
+paket_kur() {  # mantıksal adlar
+    local pkgs=()
+    for n in "$@"; do
+        read -r -a ad <<<"$(paket_adlari "$n")"
+        pkgs+=("${ad[@]}")
+    done
+    ((${#pkgs[@]})) || return 0
+    say "Kuruluyor: ${pkgs[*]} (yönetici parolası istenebilir)…"
+    case "$PM" in
+        pacman) sudo pacman -S --needed --noconfirm "${pkgs[@]}" ;;
+        apt-get) sudo apt-get install -y "${pkgs[@]}" ;;
+        dnf) sudo dnf install -y "${pkgs[@]}" ;;
+        zypper) sudo zypper install -y "${pkgs[@]}" ;;
+        *) return 1 ;;
+    esac
+}
 
 echo
 echo "Asistan for Claude Code kuruluyor"
 echo "───────────────────────────────────"
 
-need_py=0
-python3 -c 'import PySide6.QtWebEngineWidgets, PySide6.QtQuickWidgets, PySide6.QtWebChannel' 2>/dev/null || need_py=1
-need_tmux=0
-command -v tmux >/dev/null || need_tmux=1
-if ((need_py || need_tmux)); then
-    say "Eksikler kuruluyor (yönetici parolası istenebilir)…"
-    if command -v pacman >/dev/null; then
-        pkgs=()
-        ((need_tmux)) && pkgs+=(tmux)
-        ((need_py)) && pkgs+=(pyside6 qt6-webengine)
-        sudo pacman -S --needed --noconfirm "${pkgs[@]}"
-    elif command -v apt-get >/dev/null; then
-        pkgs=()
-        ((need_tmux)) && pkgs+=(tmux)
-        ((need_py)) && pkgs+=(python3-pyside6.qtwebenginewidgets python3-pyside6.qtquickwidgets python3-pyside6.qtwebchannel)
-        sudo apt-get install -y "${pkgs[@]}"
-    elif command -v dnf >/dev/null; then
-        pkgs=()
-        ((need_tmux)) && pkgs+=(tmux)
-        ((need_py)) && pkgs+=(python3-pyside6)
-        sudo dnf install -y "${pkgs[@]}"
-    elif command -v zypper >/dev/null; then
-        pkgs=()
-        ((need_tmux)) && pkgs+=(tmux)
-        ((need_py)) && pkgs+=(python3-pyside6)
-        sudo zypper install -y "${pkgs[@]}"
+eksik=()
+command -v tmux >/dev/null || eksik+=(tmux)
+python3 -c 'import PySide6.QtWebEngineWidgets, PySide6.QtQuickWidgets, PySide6.QtWebChannel' 2>/dev/null || eksik+=(pyside)
+if ((${#eksik[@]})); then
+    if [[ -n "$PM" ]]; then
+        paket_kur "${eksik[@]}"
+    elif [[ " ${eksik[*]} " == *" tmux "* ]]; then
+        echo "tmux kurulamadı: paket yöneticisi tanınmadı"
+        exit 1
     else
-        ((need_tmux)) && { echo "tmux kurulamadı: paket yöneticisi tanınmadı"; exit 1; }
         python3 -m pip install --user PySide6
     fi
 fi
@@ -101,8 +130,41 @@ if ((WIDGET)) && command -v kpackagetool6 >/dev/null; then
     fi
 fi
 
-if ! python3 -c "import sys; sys.path.insert(0, '$DIR/scripts'); import sesli_istem; sys.exit(0 if sesli_istem.available() else 1)"; then
-    say "Konuşarak yazma için Dikte kurulabilir: https://github.com/yusufipk/dikte (kurulunca mikrofon kendiliğinden görünür)"
+# Konuşarak yazma: Dikte (kendi deposundan, kendi kurulum betiğiyle). Kuruluysa (nereye kurulduysa) dokunulmaz.
+dikte_kurulu() {
+    python3 -c "import sys; sys.path.insert(0, '$DIR/scripts'); import sesli_istem; sys.exit(0 if sesli_istem.available() else 1)"
+}
+if ((DIKTE)) && ! dikte_kurulu; then
+    say "Konuşarak yazma için Dikte kuruluyor…"
+    gerek=()
+    command -v git >/dev/null || gerek+=(git)
+    command -v ffmpeg >/dev/null || gerek+=(ffmpeg)
+    command -v pw-record >/dev/null || command -v parec >/dev/null || gerek+=(ses)
+    if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]]; then
+        command -v xclip >/dev/null && command -v xdotool >/dev/null || gerek+=(pano)
+    else
+        command -v wl-copy >/dev/null && command -v ydotool >/dev/null || gerek+=(pano)
+    fi
+    python3 -c 'import PyQt6.QtWidgets' 2>/dev/null || gerek+=(pyqt)
+    if ((${#gerek[@]})) && [[ -n "$PM" ]]; then
+        paket_kur "${gerek[@]}" || warn "Dikte'nin gerekenlerinden bazıları kurulamadı"
+    fi
+    if [[ -d "$DIKTE_DIR/.git" ]]; then
+        git -C "$DIKTE_DIR" pull --ff-only -q || true
+    else
+        git clone -q --depth 1 "$DIKTE_REPO" "$DIKTE_DIR"
+    fi
+    # Wayland'de otomatik yapıştırma ydotoold ister; paket kullanıcı servisi getiriyorsa aç
+    if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]] && systemctl --user cat ydotool.service >/dev/null 2>&1; then
+        systemctl --user enable --now ydotool.service >/dev/null 2>&1 || true
+    fi
+    if bash "$DIKTE_DIR/install.sh" && dikte_kurulu; then
+        ok "Dikte kuruldu: mikrofon düğmesi programda ve widget'ta görünür (ilk kayıtta ses modeli iner)"
+    else
+        warn "Dikte kurulamadı; Asistan onsuz da çalışır. Yeniden denemek için: ./kur.sh"
+    fi
+elif ((DIKTE)); then
+    ok "Dikte zaten kurulu (konuşarak yazma hazır)"
 fi
 
 echo
