@@ -20,6 +20,12 @@ Komutlar:
   tus TUŞ...            esc, enter, up, down, btab, tab, ctrl-c, 1..9
   gir PARÇA...          widget terminaline klavyeyle yazılanlar, olduğu gibi: t.METİN (yüzde kodlu),
                         k.TUŞ (tmux adı: Enter, BSpace, C-c…), p.METİN (yapıştırma)
+  adlandir KİMLİK [AD]  sohbetin Asistan'daki adı (yüzde kodlu; boşsa Claude'un başlığına döner); Claude'a sohbet
+                        bir sonraki açılışında bu adla verilir
+  tasi KİMLİK PROJE|-   sohbeti Asistan'da başka bir projenin altında göster (- : kendi projesine dön)
+  gizle KİMLİK evet|hayir
+                        sohbeti listelerden gizle ya da geri getir
+  sil KİMLİK            sohbeti çöp kutusuna taşır (geri alınabilir); açıksa 5
   guven evet|hayir [AD] "bu klasöre güveniyor musun" sorusunu cevaplar (hayır: oturumu kapatır); AD verilirse
                         o oturumda (widget ekranda gördüğünü verir), yoksa seçili olanda
 
@@ -40,6 +46,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import shutil
 import string
@@ -58,8 +65,10 @@ STATE = HOME / ".local/state/claude-arka"
 CACHE = HOME / ".cache/claude-widget/projeler.json"
 SESSIONS = HOME / ".claude/sessions"
 PROJECTS = HOME / ".claude/projects"
+GENEL = "🏠 Genel"  # ev klasöründe açılan, hiçbir projeye ayrılmayan sohbetlerin oturumu
 SAFE = ("idle", "busy")
 INTERACTIVE = ("cli", "claude-vscode")  # sdk-cli / sdk-ts: başka programların arka plan işleri, listelenmez
+TEMP_DIRS = ("/tmp",)  # buralarda açılmış sohbetler geçici denemelerdir, listelenmez
 ENTER_DELAY_S = 0.3  # metinle aynı parçada gelen Enter yapıştırılmış satır sonu sayılır
 KEYS = {"esc": "Escape", "enter": "Enter", "up": "Up", "down": "Down", "btab": "BTab", "tab": "Tab",
         "ctrl-c": "C-c", **{str(n): str(n) for n in range(1, 10)}}  # fmt: skip
@@ -391,26 +400,37 @@ def _project_name(cwd: str) -> str:
     if not cwd:
         return ""
     if cwd == str(HOME):
-        return "Genel (ev klasörü)"
+        return GENEL
     name = Path(cwd).name
     return ayarlar.adlar().get(name, name)
 
 
 def _ai_title(path: Path, tail: int = 512 * 1024) -> str:
-    """Claude Code'un sohbete verdiği kısa başlık (/resume listesindeki); dosyanın sonundaki en yeni "ai-title"."""
+    """Claude Code'daki başlık (/resume listesindeki): kullanıcının /rename ile verdiği ("custom-title") varsa o,
+    yoksa Claude'un verdiği kısa başlık ("ai-title"); ikisi de dosyanın sonundaki en yeni kayıttan."""
+    try:
+        own = json.loads((path.with_suffix("") / "custom-title.json").read_text()).get("customTitle")
+        if own:
+            return str(own).strip()
+    except (OSError, ValueError, AttributeError):
+        pass
     try:
         with path.open("rb") as fh:
             fh.seek(max(0, path.stat().st_size - tail))
             chunk = fh.read().decode(errors="ignore")
     except OSError:
         return ""
+    ai = ""
     for line in reversed(chunk.splitlines()):
-        if '"ai-title"' in line:
+        if '"custom-title"' in line or (not ai and '"ai-title"' in line):
             try:
-                return str(json.loads(line).get("aiTitle") or "").strip()
+                e = json.loads(line)
             except ValueError:
                 continue
-    return ""
+            if e.get("type") == "custom-title" and e.get("customTitle"):
+                return str(e["customTitle"]).strip()
+            ai = ai or str(e.get("aiTitle") or "").strip()
+    return ai
 
 
 def _typed(text: str) -> bool:
@@ -449,7 +469,10 @@ def _head(path: Path) -> dict[str, str]:
 
 
 def session_title(session_id: str) -> str:
-    """Sohbetin Asistan'daki başlığı: Claude Code'un verdiği kısa başlık, yoksa ilk istem."""
+    """Sohbetin Asistan'daki başlığı: Asistan'da verilen ad, Claude'daki başlık, yoksa ilk istem."""
+    own = str(ayarlar.sohbet(session_id).get("baslik") or "")
+    if own:
+        return own
     f = next(PROJECTS.glob(f"*/{session_id}.jsonl"), None)
     if f is None:
         return ""
@@ -471,6 +494,18 @@ def _folder(folder: str) -> Path:
     """Projenin klasörü: tam yol ya da proje köküne (yoksa ev klasörüne) göre."""
     p = Path(folder).expanduser()
     return p if p.is_absolute() else (ayarlar.proje_koku() or HOME) / p
+
+
+def _hidden_dir(cwd: str) -> bool:
+    """Ayarlarda yok sayılan bir proje klasöründe mi (ör. Arşiv); o sohbetler hiçbir listede görünmez."""
+    root = ayarlar.proje_koku()
+    if not root or not cwd:
+        return False
+    try:
+        rel = Path(cwd).relative_to(root)
+    except ValueError:
+        return False
+    return bool(rel.parts) and rel.parts[0] in set(ayarlar.oku().get("yok_say", []))
 
 
 def _family_of_dir(cwd: str) -> str:
@@ -524,14 +559,16 @@ def _family_of_session(h: dict[str, Any]) -> str:
     return fid if n >= 5 and n / total >= 0.6 else ""
 
 
-def projects(per_project: int = 8, max_age_s: float = 20.0) -> list[dict[str, Any]]:
-    """Genel ve projeler (sohbeti olmayan projeler de: yeni sohbet açılabilsin); her birinin son sohbetleri."""
+def projects(per_project: int = 8, max_age_s: float = 20.0, gizliler: bool = False) -> list[dict[str, Any]]:
+    """Genel ve projeler (sohbeti olmayan projeler de: yeni sohbet açılabilsin); her birinin son sohbetleri.
+    Asistan'daki sohbet ayarları (ad, proje, gizli: ayarlar.sohbetler) önbellekten sonra uygulanır, anında görünür;
+    gizlenenler yalnızca gizliler=True ile gelir ("gizli": True işaretiyle)."""
     try:
         cached = json.loads(CACHE.read_text())
     except (OSError, ValueError):
         cached = {}
     heads: dict[str, Any] = cached.get("heads", {})
-    if time.time() - float(cached.get("t", 0)) < max_age_s and "projects" in cached and cached.get("v") == 3:
+    if time.time() - float(cached.get("t", 0)) < max_age_s and "projects" in cached and cached.get("v") == 4:
         projs: list[dict[str, Any]] = cached["projects"]
     else:
         groups: dict[str, list[dict[str, Any]]] = {}
@@ -548,11 +585,13 @@ def projects(per_project: int = 8, max_age_s: float = 20.0) -> list[dict[str, An
             if h.get("mtime") != st.st_mtime or "ai" not in h:  # başlık sohbet ilerledikçe güncellenir
                 h["ai"] = _ai_title(f) or h.get("ai", "")
             h["mtime"] = st.st_mtime
-            if h["entrypoint"] not in INTERACTIVE or not h["cwd"] or h["cwd"].startswith("/tmp"):
+            if h["entrypoint"] not in INTERACTIVE or not h["cwd"] or h["cwd"].startswith(TEMP_DIRS):
                 continue
             if not Path(h["cwd"]).is_dir():  # silinmiş ya da taşınmış klasör: açılamaz
                 continue
             if not h["title"] and st.st_size < 20_000:  # hiç mesaj yazılmadan kapatılmış boş sohbet
+                continue
+            if _hidden_dir(h["cwd"]):
                 continue
             fam = _family_of_dir(h["cwd"])
             if not fam:  # ev klasöründe (ya da başka yerde) açılmış: içeriğine göre ayır
@@ -572,19 +611,20 @@ def projects(per_project: int = 8, max_age_s: float = 20.0) -> list[dict[str, An
         known += [(fid, _project_name(fid), fid) for fid in groups if fid.startswith("/") and fid not in ids]  # ayarsız
         seen: set[str] = set()
         projs = []
-        for fid, name, cwd in [("", "Genel (ev klasörü)", str(HOME)), *known]:
+        for fid, name, cwd in [("", GENEL, str(HOME)), *known]:
             if fid in seen:
                 continue
             seen.add(fid)
             items = sorted(groups.get(fid, []), key=lambda x: -x["mtime"])
             projs.append({"id": fid or "genel", "name": name, "cwd": cwd, "mtime": items[0]["mtime"] if items else 0,
-                          "sessions": items[:per_project]})  # fmt: skip
+                          "sessions": items})  # fmt: skip
         projs.sort(key=lambda p: -p["mtime"])
         try:
             CACHE.parent.mkdir(parents=True, exist_ok=True)
-            CACHE.write_text(json.dumps({"v": 3, "t": time.time(), "projects": projs, "heads": heads}))
+            CACHE.write_text(json.dumps({"v": 4, "t": time.time(), "projects": projs, "heads": heads}))
         except OSError:
             pass
+    projs = _apply_overrides(projs, gizliler, per_project)
     # Hangi sohbet nerede açık: arka planda mı, bir terminalde mi (bu, önbellekten bağımsız her seferinde)
     ours = {s["session"]: s["name"] for s in sessions()}
     elsewhere = set()
@@ -599,6 +639,91 @@ def projects(per_project: int = 8, max_age_s: float = 20.0) -> list[dict[str, An
         for s in p["sessions"]:
             s["where"] = "arka" if s["id"] in ours else "terminal" if s["id"] in elsewhere else ""
     return projs
+
+
+def _apply_overrides(projs: list[dict[str, Any]], gizliler: bool, per_project: int) -> list[dict[str, Any]]:
+    """Asistan'da verilen adlar, taşımalar ve gizlemeler; ardından projeler yine son kullanıma göre sıralanır."""
+    ov = ayarlar.sohbetler()
+    byid = {p["id"]: p for p in projs}
+    moved: list[tuple[str, dict[str, Any]]] = []
+    for p in projs:
+        keep = []
+        for s in p["sessions"]:
+            o = ov.get(s["id"], {})
+            s = dict(s)
+            if o.get("baslik"):
+                s["title"], s["adlandirildi"] = str(o["baslik"]), True
+            if o.get("gizli"):
+                s["gizli"] = True
+            if (o.get("gizli") and not gizliler):
+                continue
+            hedef = str(o.get("proje") or "")
+            if hedef and hedef != p["id"] and hedef in byid:
+                s["tasindi"] = True
+                moved.append((hedef, s))
+                continue
+            keep.append(s)
+        p["sessions"] = keep
+    for hedef, s in moved:
+        byid[hedef]["sessions"].append(s)
+    for p in projs:
+        p["sessions"] = sorted(p["sessions"], key=lambda x: -x["mtime"])[:per_project]
+        p["mtime"] = max((x["mtime"] for x in p["sessions"]), default=0)
+    projs.sort(key=lambda p: -p["mtime"])
+    return projs
+
+
+def _invalidate_projects() -> None:
+    """Proje önbelleğini eskit (sohbet silinince listeden hemen düşsün); başlık önbelleği korunur."""
+    try:
+        cached = json.loads(CACHE.read_text())
+        cached["t"] = 0
+        CACHE.write_text(json.dumps(cached))
+    except (OSError, ValueError):
+        pass
+
+
+
+def rename(session_id: str, title: str) -> int:
+    """Sohbetin Asistan'daki adı (boşsa Claude'un başlığına döner): program, widget ve Telegram'da hemen görünür;
+    Claude'a sohbet bir sonraki açılışında --name ile verilir. Açık oturuma /rename yazılmaz: istem kutusu kullanıcının,
+    Telegram'ın ve diktenin ortak girişidir, araya yazılan komut bir mesaja karışabilir."""
+    title = " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", title).split())[:80]
+    ayarlar.sohbet_ayarla(session_id, baslik=title or None)
+    return 0
+
+
+def _trash(path: Path) -> bool:
+    gio = shutil.which("gio")
+    if gio:
+        return subprocess.run([gio, "trash", str(path)], capture_output=True, check=False).returncode == 0  # noqa: S603
+    trash = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local/share") / "Trash"
+    (trash / "files").mkdir(parents=True, exist_ok=True)
+    (trash / "info").mkdir(parents=True, exist_ok=True)
+    dest = trash / "files" / path.name
+    n = 1
+    while dest.exists():
+        dest = trash / "files" / f"{path.stem}.{n}{path.suffix}"
+        n += 1
+    (trash / "info" / f"{dest.name}.trashinfo").write_text(
+        f"[Trash Info]\nPath={urllib.parse.quote(str(path))}\nDeletionDate={time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+    shutil.move(str(path), dest)
+    return True
+
+
+def trash_session(session_id: str) -> int:
+    """Sohbeti çöp kutusuna taşır (geri alınabilir). Açıksa dokunmaz: 5; bulunamazsa 4; taşınamazsa 1."""
+    if any(session_id in (s["session"], s["resume"]) for s in sessions()) or open_elsewhere(session_id):
+        return 5
+    f = next(PROJECTS.glob(f"*/{session_id}.jsonl"), None)
+    if f is None:
+        return 4
+    for t in [f, *([f.with_suffix("")] if f.with_suffix("").is_dir() else [])]:
+        if not _trash(t):
+            return 1
+    ayarlar.sohbet_ayarla(session_id, baslik=None, proje=None, gizli=None)
+    _invalidate_projects()
+    return 0
 
 
 # ── ekran: ANSI renkleri → HTML ─────────────────────────────────────────────────────────────
@@ -722,6 +847,16 @@ def main(argv: list[str]) -> int:
         return press(rest)
     if cmd == "gir" and rest:
         return feed(rest)
+    if cmd == "adlandir" and rest:
+        return rename(rest[0], urllib.parse.unquote(rest[1]) if len(rest) > 1 else "")
+    if cmd == "tasi" and len(rest) == 2:
+        ayarlar.sohbet_ayarla(rest[0], proje=rest[1] if rest[1] != "-" else None)
+        return 0
+    if cmd == "gizle" and len(rest) == 2 and rest[1] in ("evet", "hayir"):
+        ayarlar.sohbet_ayarla(rest[0], gizli=rest[1] == "evet")
+        return 0
+    if cmd == "sil" and rest:
+        return trash_session(rest[0])
     if cmd == "guven" and rest and rest[0] in ("evet", "hayir"):
         return answer_trust(rest[0] == "evet", rest[1] if len(rest) > 1 else "")
     print(__doc__)

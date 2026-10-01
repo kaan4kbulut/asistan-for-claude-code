@@ -55,7 +55,7 @@ Rectangle {
         return i < 0 ? 0 : i
     }
     readonly property var curProj: projList.length ? projList[projIndex] : null
-    readonly property var sessList: curProj ? curProj.sessions : []
+    readonly property var sessList: curProj ? curProj.sessions.filter(function (s) { return !s.gizli }).slice(0, 12) : []  // hepsi: Sohbetler sekmesi
     readonly property int sessIndex: {
         if (sessId === "yeni") return 0
         var i = sessList.findIndex(function (s) { return s.id === root.sessId })

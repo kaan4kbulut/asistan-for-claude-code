@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import arka
+import ayarlar
 import testler
 import veri
 
@@ -112,6 +113,9 @@ class Toplayici:
         sid = s["session"] or s["resume"]
         if not sid:
             return f"{s['project']} · yeni sohbet"
+        own = ayarlar.sohbet(sid).get("baslik")  # Asistan'da verilen ad anında
+        if own:
+            return str(own)
         if sid not in self.titles or not self.titles[sid]:
             self.titles[sid] = arka.session_title(sid)
         return self.titles[sid] or s["project"]
@@ -124,7 +128,8 @@ class Toplayici:
         if force_slow or now - self.slow_at >= SLOW_S or cwd != self.slow_cwd:
             self.slow_at, self.slow_cwd = now, cwd
             project = veri.project_of(cwd)
-            self.slow = {"testler": testler.listing(), "projeler": arka.projects(),
+            self.titles = {}  # Claude'da /rename ile değişen adlar da yenilensin
+            self.slow = {"testler": testler.listing(), "projeler": arka.projects(per_project=10_000, gizliler=True),
                          "git": veri.git_info(project) if project else EMPTY_GIT,
                          "steps": veri.project_steps(project) if project else EMPTY_STEPS,
                          **veri.jobs(project, now)}  # fmt: skip

@@ -14,6 +14,10 @@ Ayar yoksa: ev klasöründe açılan sohbetler "Genel"de, öteki her klasör ken
 
 testler.py (isteğe bağlı): `projects()` işlevi Test bölümünün projelerini ve sürümlerini verir (biçimi scripts/testler.py
 başında anlatılır). Yoksa Test bölümü görünmez.
+
+sohbetler.json (Asistan yazar, Sohbetler panelinden): sohbet başına Asistan'daki ad, proje ve gizleme:
+  {"<sohbet kimliği>": {"baslik": "Yeni ad", "proje": "web", "gizli": true}}
+Claude'un kendi sohbet kayıtlarına dokunulmaz.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ HOME = Path.home()
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "asistan"
 AYAR = CONFIG / "ayarlar.json"
 TESTLER = CONFIG / "testler.py"
+SOHBETLER = CONFIG / "sohbetler.json"
 
 _cache: dict[str, tuple[float, Any]] = {}
 
@@ -96,3 +101,42 @@ def test_modulu() -> ModuleType | None:
         return None
     _cache["testler"] = (m, mod)
     return mod
+
+
+def sohbetler() -> dict[str, dict[str, Any]]:
+    """Sohbetlerin Asistan'daki ayarları (ad, proje, gizli); değişince yeniden okunur."""
+    m = _mtime(SOHBETLER)
+    hit = _cache.get("sohbetler")
+    if hit and hit[0] == m:
+        return dict(hit[1])
+    try:
+        data = json.loads(SOHBETLER.read_text())
+        data = {str(k): v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        data = {}
+    _cache["sohbetler"] = (m, data)
+    return dict(data)
+
+
+def sohbet(sid: str) -> dict[str, Any]:
+    return dict(sohbetler().get(sid, {}))
+
+
+def sohbet_ayarla(sid: str, **alanlar: Any) -> None:
+    """Bir sohbetin ayarını değiştirir; değeri None ya da boş olan alan silinir (kayıt boşalırsa kaldırılır)."""
+    data = sohbetler()
+    cur = dict(data.get(sid, {}))
+    for k, v in alanlar.items():
+        if v is None or v == "" or v is False:
+            cur.pop(k, None)
+        else:
+            cur[k] = v
+    if cur:
+        data[sid] = cur
+    else:
+        data.pop(sid, None)
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    tmp = SOHBETLER.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    tmp.replace(SOHBETLER)
+    _cache.pop("sohbetler", None)

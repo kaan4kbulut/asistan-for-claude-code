@@ -58,6 +58,7 @@ from PySide6.QtWidgets import (
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import arka  # noqa: E402
+import ayarlar  # noqa: E402
 import pencere as kwin  # noqa: E402
 import durum  # noqa: E402
 import testler  # noqa: E402
@@ -470,17 +471,18 @@ KENAR = 10
 
 
 class Sekme(QWidget):
-    """Sol üst kenardaki dikey "Test" sekmesi: basınca Test çekmecesi soldan içeri kayar, yine basınca kapanır."""
+    """Sol kenardaki dikey sekme (Test, Sohbetler): basınca çekmecesi soldan içeri kayar, yine basınca kapanır."""
 
     tiklandi = Signal()
 
-    def __init__(self, parent: QWidget) -> None:
+    def __init__(self, parent: QWidget, etiket: str, ipucu: str) -> None:
         super().__init__(parent)
+        self.etiket = etiket
         self.acik = False
         self.ustunde = False
-        self.setFixedSize(SOL - 6, 76)
+        self.setFixedSize(SOL - 6, 40 + 9 * len(etiket))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Test: projelerin son sürümü ve önizlemesi")
+        self.setToolTip(ipucu)
 
     def enterEvent(self, e: Any) -> None:  # noqa: N802
         self.ustunde = True
@@ -509,7 +511,7 @@ class Sekme(QWidget):
         p.translate(self.width() / 2 - 1, self.height() / 2)
         p.rotate(-90)
         p.drawText(QRectF(-self.height() / 2, -self.width() / 2, self.height(), self.width()),
-                   Qt.AlignmentFlag.AlignCenter, ("▾ " if self.acik else "▸ ") + "Test")  # fmt: skip
+                   Qt.AlignmentFlag.AlignCenter, ("▾ " if self.acik else "▸ ") + self.etiket)  # fmt: skip
 
 
 class Cekmece(QFrame):
@@ -568,6 +570,24 @@ class Cekmece(QFrame):
         self.ayarla(genis=k != "liste")
 
 
+class SohbetCekmece(QFrame):
+    """Sohbetler çekmecesi: bütün sohbetler (qml/SohbetYonetimi.qml); aç, adlandır, taşı, gizle, çöpe at."""
+
+    def __init__(self, parent: QWidget, arayuz: QObject) -> None:
+        super().__init__(parent)
+        self.setObjectName("cekmece")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(4, 4, 4, 6)
+        self.liste = QQuickWidget()
+        self.liste.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        self.liste.setClearColor(QColor(C["bg"]))
+        qml_baglam(self.liste, arayuz)
+        self.liste.setSource(QUrl.fromLocalFile(str(HERE / "qml/SohbetYonetimi.qml")))
+        for err in self.liste.errors():
+            print("qml:", err.toString(), file=sys.stderr)
+        v.addWidget(self.liste)
+
+
 def qml_baglam(w: QQuickWidget, arayuz: QObject) -> None:
     ctx = w.rootContext()
     font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
@@ -599,6 +619,7 @@ class Arayuz(QObject):
     @Slot(str, str)
     def oturumAc(self, cwd: str, sid: str) -> None:  # noqa: N802
         self.p.oturum_ac(cwd, sid)
+        self.p.sohbet_cekmece_ac(False)  # açılan sohbet terminalde görünsün
 
     @Slot(str, str)
     def testAc(self, pid: str, which: str) -> None:  # noqa: N802
@@ -607,6 +628,35 @@ class Arayuz(QObject):
     @Slot(str)
     def testYenile(self, pid: str) -> None:  # noqa: N802
         ARKADA.calistir(lambda: testler.refresh(pid), lambda _r: self.p.isci.simdi(yavas_da=True))
+
+    @Slot(str, str)
+    def sohbetAdlandir(self, sid: str, ad: str) -> None:  # noqa: N802
+        def bitti(_kod: int | None) -> None:
+            self.bildirim.emit("sohbet", "Ad verildi; Claude'a sohbet bir sonraki açılışında bu adla açılır." if ad.strip()
+                               else "Ad kaldırıldı: Claude'un başlığı kullanılıyor.")  # fmt: skip
+            self.p.isci.simdi(yavas_da=True)
+
+        ARKADA.calistir(lambda: arka.rename(sid, ad), bitti)
+
+    @Slot(str, str)
+    def sohbetTasi(self, sid: str, proje: str) -> None:  # noqa: N802
+        ayarlar.sohbet_ayarla(sid, proje=None if proje == "-" else proje)
+        self.p.isci.simdi(yavas_da=True)
+
+    @Slot(str, bool)
+    def sohbetGizle(self, sid: str, gizli: bool) -> None:  # noqa: N802
+        ayarlar.sohbet_ayarla(sid, gizli=gizli)
+        self.bildirim.emit("sohbet", "Gizlendi: '◌ gizlenenler' ile görünür." if gizli else "Listelere geri getirildi.")
+        self.p.isci.simdi(yavas_da=True)
+
+    @Slot(str)
+    def sohbetSil(self, sid: str) -> None:  # noqa: N802
+        def bitti(kod: int | None) -> None:
+            self.bildirim.emit("sohbet", "Çöp kutusuna taşındı (oradan geri alınabilir)." if kod == 0 else
+                               "!Açık sohbet silinemez: önce kapat." if kod == 5 else f"!Silinemedi ({kod}).")  # fmt: skip
+            self.p.isci.simdi(yavas_da=True)
+
+        ARKADA.calistir(lambda: arka.trash_session(sid), bitti)
 
     @Slot()
     def mikrofon(self) -> None:
@@ -680,9 +730,19 @@ class Pencere(QMainWindow):
         self.cekmece = Cekmece(govde, self.arayuz)
         self.cekmece.panel.kapandi.connect(lambda: self.cekmece_ac("liste"))
         self.cekmece.hide()
-        self.sekme = Sekme(govde)
+        self.sekme = Sekme(govde, "Test", "Test: projelerin son sürümü ve önizlemesi")
         self.sekme.move(0, KENAR + 6)
         self.sekme.tiklandi.connect(lambda: self.cekmece_ac("kapali" if self.cekmece_kipi != "kapali" else "liste"))
+        self.sohbet_cekmece = SohbetCekmece(govde, self.arayuz)
+        self.sohbet_cekmece.hide()
+        self.sohbet_acik = False
+        self.sohbet_sekme = Sekme(govde, "Sohbetler", "Sohbetler: bütün sohbetler; aç, adlandır, taşı, gizle, sil")
+        self.sohbet_sekme.move(0, KENAR + 6 + self.sekme.height() + 6)
+        self.sohbet_sekme.tiklandi.connect(lambda: self.sohbet_cekmece_ac(not self.sohbet_acik))
+        self.sohbet_anim = QPropertyAnimation(self.sohbet_cekmece, b"geometry", self)
+        self.sohbet_anim.setDuration(220)
+        self.sohbet_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.sohbet_anim.finished.connect(lambda: self.sohbet_cekmece.setVisible(self.sohbet_acik))
         self.anim = QPropertyAnimation(self.cekmece, b"geometry", self)
         self.anim.setDuration(220)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -852,8 +912,36 @@ class Pencere(QMainWindow):
         x = SOL if kip != "kapali" else -w - 4
         return QRect(x, KENAR, w, H - 2 * KENAR)
 
+    def _sohbet_yeri(self, acik: bool) -> QRect:
+        g = self.centralWidget()
+        w = min(620, g.width() - SOL - KENAR)
+        return QRect(SOL if acik else -w - 4, KENAR, w, g.height() - 2 * KENAR)
+
+    def sohbet_cekmece_ac(self, acik: bool) -> None:
+        """Sohbetler çekmecesi soldan kayarak açılır ya da kapanır (Test çekmecesi açıksa o kapanır)."""
+        if acik == self.sohbet_acik:
+            return
+        if acik and self.cekmece_kipi != "kapali":
+            self.cekmece_ac("kapali")
+        self.sohbet_acik = acik
+        self.sohbet_sekme.acik = acik
+        self.sohbet_sekme.update()
+        hedef = self._sohbet_yeri(acik)
+        if acik:
+            self.sohbet_cekmece.setGeometry(self._sohbet_yeri(False))
+            self.sohbet_cekmece.show()
+        self.sohbet_cekmece.raise_()
+        self.sekme.raise_()
+        self.sohbet_sekme.raise_()
+        self.sohbet_anim.stop()
+        self.sohbet_anim.setStartValue(self.sohbet_cekmece.geometry())
+        self.sohbet_anim.setEndValue(hedef)
+        self.sohbet_anim.start()
+
     def cekmece_ac(self, kip: str, yazi: str = "") -> None:
         """kapali | liste | web | uygulama: çekmece kayarak açılır, genişler ya da kapanır."""
+        if kip != "kapali" and self.sohbet_acik:
+            self.sohbet_cekmece_ac(False)
         onceki, self.cekmece_kipi = self.cekmece_kipi, kip
         if kip in ("kapali", "liste"):
             self._uygulamalari_birak()
@@ -871,6 +959,7 @@ class Pencere(QMainWindow):
             self.cekmece.show()
         self.cekmece.raise_()
         self.sekme.raise_()
+        self.sohbet_sekme.raise_()
         self.anim.stop()
         self.anim.setStartValue(self.cekmece.geometry())
         self.anim.setEndValue(hedef if kip != "kapali" else QRect(-self.cekmece.width() - 4, KENAR, self.cekmece.width(), hedef.height()))
@@ -881,6 +970,9 @@ class Pencere(QMainWindow):
         if self.cekmece_kipi != "kapali":  # pencere kenarlarıyla birlikte
             self.anim.stop()
             self.cekmece.setGeometry(self._cekmece_yeri(self.cekmece_kipi))
+        if self.sohbet_acik:
+            self.sohbet_anim.stop()
+            self.sohbet_cekmece.setGeometry(self._sohbet_yeri(True))
 
     # ── pencere ──
     def goster(self) -> None:
